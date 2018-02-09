@@ -8,9 +8,10 @@ import scipy.stats as stats
 from StringIO import StringIO
 from matplotlib import pyplot as plt
 import seaborn as sns
-from IPython.display import display, FileLink
+from IPython.display import display, FileLink, HTML
 from sklearn.manifold import MDS
 from sklearn.metrics.pairwise import pairwise_distances
+from sklearn import preprocessing
 import matplotlib.cm as cm
 
 
@@ -40,12 +41,22 @@ def transpose_df(df, type_=None):
 
 
 def plot_and_save_corr(df, method='pearson',
+                       scale=False,
                        title_postfix=u'',
                        figsize=(16, 6),
                        fn_postfix='all',
-                       fn_templ='mineral_composition_corr_{method}_{postfix}'):
+                       fn_templ='mc_corr_{method}_{postfix}{datascaled}'):
 
-    fn = fn_templ.format(**{'method': method, 'postfix': fn_postfix})
+    datascaled = ''
+    if scale:
+        datascaled = '_slaced'
+
+    fn = fn_templ.format(**{'method': method, 'postfix': fn_postfix,
+                            'datascaled': datascaled})
+
+    if scale:
+        df = pd.DataFrame(data=preprocessing.scale(df, axis=1),
+                          columns=df.columns, index=df.index)
 
     df_corr = df.corr(method=method)
     display(df_corr)
@@ -80,7 +91,7 @@ def plot_and_save_corr(df, method='pearson',
 
 def pairplot(df, title=None, figsize=(8, 8), save=False,
              fn_postfix='all',
-             fn_templ='mineral_composition_pair_plot_{postfix}'):
+             fn_templ='mc_pair_plot_{postfix}'):
     g = sns.PairGrid(df)
     g = g.map_upper(plt.scatter)
     g = g.map_lower(regplot_perason)
@@ -199,6 +210,84 @@ def plot_mds(X, metric='cosine', ax=None, save=False,
     fig.suptitle(u'Понижение пространства признаков '
                  u'(минерального состава грунта)')
     if save:
-        fn = 'mineral_composition_mds_{}.png'.format(metric)
+        fn = 'mc_mds_{}.png'.format(metric)
         fig.savefig(fn)
         display(FileLink(fn))
+
+
+def test_diff(df, mineral='SiO2', types=[u'Море', u'Горы'], alpha=0.05):
+    a = df[df.type == types[0]][mineral]
+    b = df[df.type == types[1]][mineral]
+
+    fig, axes = plt.subplots(ncols=2, figsize=(14, 6))
+    ax = axes[0]
+    stats.probplot(a, dist="norm", plot=ax, rvalue=True)
+    ax.set_title(u'Море')
+    ax.set_xlabel(u'Теоретические')
+    ax.set_ylabel(u'Наблюдаемые')
+
+    ax = axes[1]
+    stats.probplot(b, dist="norm", plot=ax, rvalue=True)
+    ax.set_title(u'Грунт')
+    ax.set_xlabel(u'Теоретические')
+    ax.set_ylabel(u'Наблюдаемые')
+
+
+    fig.suptitle(u'Вероятностные графики, нормальное ли распределения'
+                 u' (близки ли к прямой )\n{}'.format(mineral))
+    fig.savefig('mc_probplot_{}.png'.format(mineral))
+
+    plt.show()
+
+    display(HTML(u"""
+<p>Критерий <a href="https://en.wikipedia.org/wiki/Shapiro–Wilk_test">Шапиро-Уилка</a></o>
+
+<ul>
+ <li>$H_0\colon$ Уровень {} (в выборках суша и море) распредлены нормально</li>
+ <li>$H_1\colon$ не нормально.</li>
+</ul>
+
+ Задаем уровень значимости alpha {} ({}% уровень доверия)
+    """.format(mineral, alpha, 100 * (1 - alpha))))
+
+    W, pvalue = stats.shapiro(a)
+    print(u"Проверка Shapiro-Wilk '{}': W-statistic: {}, p-value: {}".format(types[0], W, pvalue))
+    if pvalue > alpha:
+        display(HTML(u"Отвергаем гипотезу $H_0\colon$"))
+    else:
+        raise NotImplementedError
+
+    W2, pvalue2 = stats.shapiro(a)
+    print(u"Проверка Shapiro-Wilk '{}': W-statistic: {}, p-value: {}".format(types[0], W2, pvalue2))
+
+    if pvalue2 > alpha:
+        display(HTML(u"Отвергаем гипотезу $H_0\colon$"))
+    else:
+        raise NotImplementedError
+
+
+    if (pvalue2 > alpha or pvalue2 > alpha):
+        display(HTML(
+            u"""Так как p-value большое (больше 0.05) отвергаем гипотезу о нормальности.<br />
+Критерий Стюедента применить нельзя.""".format(alpha)))
+
+        display(HTML(
+            u"""Поэтому применяем непараметрический критерии
+            <a href="https://ru.wikipedia.org/wiki/U-критерий_Манна_—_Уитни)">
+            [U-критерий Манна — Уитни]</a>"""
+            ))
+        m = stats.mannwhitneyu(a, b)
+        print(m)
+
+        if m.pvalue > alpha:
+            s = u"""Гипотезу о том, что выборки ({} для гор и морей) не отличаются
+                отвергнуть нелья."""
+            s = s.format(mineral)
+            display(HTML(s))
+        else:
+            display(HTML(
+                u"""Гипотеза о том, что выборки не отличаются можно
+                    отвергнуть в пользу гипотезы что <font color='red'>
+                    средние уровня {} отличаются.</font>""".format(mineral)))
+
+    pass
